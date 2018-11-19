@@ -3,17 +3,20 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <exception>
 
 #include "Token.h"
 
 
 #define MAX_PRIORITY 'z'
+#define BRACKET_PRIORITY 5
 
+//не очень круто хардкодить максимальный приоритет операции, тк он может изменится
 
 
 struct Lexeme {
 	std::string value;
-	std::string priority;
+	int priority;
 };
 struct Node {
 	Node * left = nullptr;
@@ -23,11 +26,17 @@ struct Node {
 
 void destroyTree(Node* root) {
 
-	if (root == nullptr)
-		return;
-	destroyTree(root->left);
-	destroyTree(root->right);
-	delete root;
+	//if (root == nullptr)
+	//	return;
+	//destroyTree(root->left);
+	//destroyTree(root->right);
+	//delete root;
+
+	if (root != nullptr) {
+		destroyTree(root->left);
+		destroyTree(root->right);
+		delete root;
+	}
 }
 
 Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
@@ -38,6 +47,7 @@ Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
 		root->right = nullptr;
 	}
 
+	//find minimum priority value
 	if (exp.size() == 1) {
 		root->token = Token(exp[0].value);
 		return root;
@@ -51,96 +61,83 @@ Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
 			pos = it;
 		}
 	}
+	
+	//left -pos- right
+	//TODO: tree with empty right or left part: c++ or a*
 
 	std::vector<Lexeme> left(exp.begin(), pos);
 	std::vector<Lexeme> right(pos + 1, exp.end());
 
 	root->token = Token(pos->value);
-	root->left = buildTree(left, root->left);
-	root->right = buildTree(right, root->right);
+	root->left = !left.empty() ? buildTree(left, root->left) : nullptr;
+	root->right = !right.empty() ? buildTree(right, root->right) : nullptr;
 	return root;
 }
 
 
-char getOperatorPriority(char c) {
+ int getOperatorPriority(char c) {	 
 	if (c == '|')
-		return 'a';
+		return 1;
 	if (c == '*')
-		return 'b';
-	return 'z';
+		return 3;
+	return 2;//concatenation
 }
 std::vector<Lexeme> parseExp(const std::string& exp) {
 	/*
 		Takes a string-expression and returns parsed expression
 		as a vector of Lexemes.
-		 Lexemes contain the value and priority, so that no brackets included
+		 Lexemes contain the value and priority, so that no there are brackets included
 	*/
+	//UPDATE LOGIC OF PRIORITY ASSUMING: set bracket priority as the max priority + 2
+	//UPDATE eliminating handling of many character variables and numbers
+	//UPDATE symbol's priority is -1
+	//May save all the possible DFA and NFA jump symbol
+
+	//теперь идём только по симоволам - нет многосимвольных переменных и чисел!
 
 	std::vector<Lexeme> result;
 	std::string buf;
 	int contextPriority = 0;
 	bool processSym = false; //true while handling a variable
 	char c;
-	unsigned int it = 0;
+	int it = 0;
 
 	while (it < exp.length()) {
 		c = exp[it];
-		if (processSym) {
-
-			if (std::isalpha(c))
-			{
-				buf += c;
-				it++;
-				continue;
-			}
-			else {
-				Lexeme l;
-				l.value = buf;
-				l.priority = std::to_string(contextPriority) + MAX_PRIORITY;
-				result.push_back(l);
-				buf.clear();
-				processSym = false;
-			}
-		}
 
 		if (c == '(') {
-			contextPriority++;
-			processSym = false;
+			contextPriority+=BRACKET_PRIORITY;
 			it++;
 			continue;
 		}
+
 		if (c == ')') {
-			processSym = false;
-			contextPriority--;
+			contextPriority -= BRACKET_PRIORITY;;
 			it++;
 			continue;
 		}
 
 		if (std::isalpha(c)) {
-			//start variable processing
-			processSym = true;
-			buf += c;
+			Lexeme l;
+			l.value = c;
+			l.priority = -1;
+			result.push_back(l);
 			it++;
 			continue;
 		}
 
-		//operator processing
 		Lexeme l;
 		l.value = c;
-		l.priority = std::to_string(contextPriority) + getOperatorPriority(c);
+		l.priority = contextPriority + getOperatorPriority(c);
 		result.push_back(l);
-
 		it++;
 	}
 
+	if (contextPriority != 0)
+		throw new std::runtime_error("Parsing error: Wrong brackets order");
+	if (result.empty)
+		throw new std::runtime_error("No regexp provided");
 
-	if (processSym) {
-		Lexeme l;
-		l.value = buf;
-		l.priority = std::to_string(contextPriority) + MAX_PRIORITY;
-		result.push_back(l);
-
-	}
 	return result;
 }
 
@@ -156,7 +153,14 @@ void printTree(Node* root) {
 }
 
 void acceptRegExp(std::string regexp) {
-	std::vector<Lexeme> parsedExp = parseExp(regexp);
+	std::vector<Lexeme> parsedExp;
+	try {
+
+		parsedExp = parseExp(regexp);
+	}
+	catch (std::runtime_error &e) {
+		std::cout << e.what() << std::endl;
+	}
 	Node * tree = nullptr;
 	tree = buildTree(parsedExp, tree);
 	printTree(tree);
@@ -171,3 +175,31 @@ int main() {
 	
 	return EXIT_SUCCESS;
 }
+
+
+//TODO 
+//enter  regexp 
+//parse it 
+	парсить сразу в автомат ->  в таблицу
+	--------------------------
+	|					|символы на вход 
+	|множество состояний|
+	|
+	|
+
+
+//build NFA
+//build DFA
+//UI for entering and parse words with DFA
+
+
+//TREE:
+//operations:
+//	brackets
+//	concatenate 
+//	*
+//	|
+
+int 
+
+	
