@@ -9,9 +9,12 @@ public:
 	std::string field;
 	static std::map<std::string, double(*)(double, double)> operationMap;
 	static std::map<std::string, double> variableMap;
-
+	char cfield = field[0];
 	Token() { field = ""; }
 	Token(std::string op) :field(op) {  }
+
+	
+
 
 	static void fillOperationMap() {
 		std::pair<std::string, double(*)(double, double)> p;

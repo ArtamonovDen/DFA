@@ -1,17 +1,19 @@
+
 #include <iostream>
 #include <vector>
 #include <string>
 #include <algorithm>
 #include <cctype>
 #include <exception>
-
+#include <map>
+#include <set>
 #include "Token.h"
 
 
 #define MAX_PRIORITY 'z'
 #define BRACKET_PRIORITY 5
 
-//не очень круто хардкодить максимальный приоритет операции, тк он может изменится
+std::map<char, std::set<int> > etalon_Transitions;
 
 
 struct Lexeme {
@@ -24,14 +26,8 @@ struct Node {
 	Token token; 
 };
 
+
 void destroyTree(Node* root) {
-
-	//if (root == nullptr)
-	//	return;
-	//destroyTree(root->left);
-	//destroyTree(root->right);
-	//delete root;
-
 	if (root != nullptr) {
 		destroyTree(root->left);
 		destroyTree(root->right);
@@ -40,6 +36,10 @@ void destroyTree(Node* root) {
 }
 
 Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
+
+	if (exp.empty()) {
+		//??
+	}
 
 	if (root == nullptr) {
 		root = new Node;
@@ -80,27 +80,31 @@ Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
 		return 1;
 	if (c == '*')
 		return 3;
-	return 2;//concatenation
+	if (c == '_')
+		return 2;
+	return -1; //symbol
 }
-std::vector<Lexeme> parseExp(const std::string& exp) {
+std::vector<Lexeme> parseExp(const std::string& exp) throw (std::runtime_error) {
 	/*
 		Takes a string-expression and returns parsed expression
 		as a vector of Lexemes.
 		 Lexemes contain the value and priority, so that no there are brackets included
 	*/
-	//UPDATE LOGIC OF PRIORITY ASSUMING: set bracket priority as the max priority + 2
-	//UPDATE eliminating handling of many character variables and numbers
-	//UPDATE symbol's priority is -1
-	//May save all the possible DFA and NFA jump symbol
 
-	//теперь идём только по симоволам - нет многосимвольных переменных и чисел!
-
+	std::set<char> transSet;
 	std::vector<Lexeme> result;
 	std::string buf;
 	int contextPriority = 0;
-	bool processSym = false; //true while handling a variable
 	char c;
 	int it = 0;
+	int max_priority = -2;
+	int curPriprity = 0;
+
+	//TODO preprocessing: concatenation -> _ ???
+
+	c = '-'; // empty transition symbol
+	transSet.insert(c);
+	etalon_Transitions[c] = {};
 
 	while (it < exp.length()) {
 		c = exp[it];
@@ -116,27 +120,31 @@ std::vector<Lexeme> parseExp(const std::string& exp) {
 			it++;
 			continue;
 		}
-
+		
 		if (std::isalpha(c)) {
-			Lexeme l;
-			l.value = c;
-			l.priority = -1;
-			result.push_back(l);
-			it++;
-			continue;
+			if (transSet.find(c) == transSet.end()) {
+				transSet.insert(c);
+				etalon_Transitions[c] = {};
+			}
 		}
 
 		Lexeme l;
 		l.value = c;
-		l.priority = contextPriority + getOperatorPriority(c);
-		result.push_back(l);
+		curPriprity = getOperatorPriority(c);
+		l.priority =  curPriprity == -1 ? curPriprity : contextPriority + curPriprity;
+		if (l.priority > max_priority) max_priority = l.priority;
+		result.push_back(l);		
 		it++;
 	}
 
+	
+	if (result.empty())
+		throw  std::runtime_error("No regexp provided");
 	if (contextPriority != 0)
-		throw new std::runtime_error("Parsing error: Wrong brackets order");
-	if (result.empty)
-		throw new std::runtime_error("No regexp provided");
+		throw  std::runtime_error("Parsing error: Wrong brackets order");
+
+	for (auto & v : result)
+		v.priority = v.priority == -1 ? (max_priority+1): v.priority;
 
 	return result;
 }
@@ -152,27 +160,115 @@ void printTree(Node* root) {
 	space.pop_back();
 }
 
+
+std::pair<int, int> buildNFA(Node* root, std::map<int, std::map<char, std::set<int>> >  & States) {
+	static int stateCounter = 0;
+	//открываем состояние
+	//идём глубже и строим
+	// а ну buildNFA(buildNFA(left), buildNFA(right))
+
+	//States - таблица состояний.
+	//Transitions - таблица перехода из состояния по символу из алфавита
+
+	//на каждом этапе подсасывает новые состояния к старым в зависимости от операции
+	//надо как-то отслеживать стартовые и финальные состояния
+	//Структура либо запоминать отдельной переменной для каждого автомата и передавать её
+	//переделать токен!!!
+
+	//#cond
+
+	std::pair<int, int> boundsLeft = buildNFA(root->left, States);
+	std::pair<int, int> boundsRight = buildNFA(root->right, States);
+
+	//# check token
+	char c = root->token.cfield;
+
+	int finalState;
+	int startState;
+	if (std::isalpha( root->token.is_operator))
+	{
+		//# build M(a) 
+		 //переделать тип поля!
+		//States[stateCounter] = {};
+		startState = stateCounter;
+		finalState = stateCounter + 1;
+
+		States[stateCounter] = etalon_Transitions;
+		States[stateCounter+1] = etalon_Transitions;
+		States[stateCounter][c].insert(stateCounter + 1); //переход по a
+		startState = stateCounter;
+		finalState = stateCounter + 1;
+	
+		stateCounter+=2;
+
+		return { startState,finalState };
+	}
+
+	if (c == '|') {
+		//# build M(a|b)
+		startState = stateCounter;
+		finalState = stateCounter + 1;
+
+		States[startState] = etalon_Transitions;
+		States[finalState] = etalon_Transitions;
+
+		States[startState]['-'].insert(boundsLeft.first);
+		States[startState]['-'].insert(boundsRight.first);
+
+		States[boundsLeft.second]['-'].insert(finalState);
+		States[boundsRight.second]['-'].insert(finalState);
+
+		stateCounter += 2;
+
+		return { startState,finalState };
+
+	}
+
+	if (c == '_') {
+		//# build M(ab)
+
+		//assume left subtree with value and right subtree empty
+
+	}
+
+	if (c == '*') {
+		startState
+	}
+
+	if (c == '-') {
+
+	}
+}
+
+
 void acceptRegExp(std::string regexp) {
 	std::vector<Lexeme> parsedExp;
 	try {
 
 		parsedExp = parseExp(regexp);
 	}
-	catch (std::runtime_error &e) {
+	catch (std::runtime_error const &e) {
 		std::cout << e.what() << std::endl;
+		return;
 	}
+
+
+
 	Node * tree = nullptr;
 	tree = buildTree(parsedExp, tree);
 	printTree(tree);
 	destroyTree(tree);
+
+	//# create state table
 }
 
 int main() {
 
 	//get reg exp
-	acceptRegExp("a*");
+	acceptRegExp("(a|b*)");
 
-	
+
+	std::cin.get();
 	return EXIT_SUCCESS;
 }
 
@@ -180,12 +276,12 @@ int main() {
 //TODO 
 //enter  regexp 
 //parse it 
-	парсить сразу в автомат ->  в таблицу
-	--------------------------
-	|					|символы на вход 
-	|множество состояний|
-	|
-	|
+	//парсить сразу в автомат ->  в таблицу
+	//--------------------------
+	//|					|символы на вход 
+	//|множество состояний|
+	//|
+	//|
 
 
 //build NFA
@@ -200,6 +296,5 @@ int main() {
 //	*
 //	|
 
-int 
 
 	
