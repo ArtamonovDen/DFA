@@ -11,7 +11,7 @@
 
 
 #define MAX_PRIORITY 'z'
-#define BRACKET_PRIORITY 5
+#define BRACKET_PRIORITY 5 //TODO smt with that
 
 std::map<char, std::set<int> > etalon_Transitions;
 
@@ -62,9 +62,6 @@ Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
 		}
 	}
 	
-	//left -pos- right
-	//TODO: tree with empty right or left part: c++ or a*
-
 	std::vector<Lexeme> left(exp.begin(), pos);
 	std::vector<Lexeme> right(pos + 1, exp.end());
 
@@ -160,35 +157,56 @@ void printTree(Node* root) {
 	space.pop_back();
 }
 
+void printNFA(std::map<int, std::map<char, std::set<int>> >  & States, std::pair<int, int> sf) {
+
+	std::cout << "Start: " << sf.first << "\n" << "Final: " << sf.second << "\n";
+	std::cout << "        ";
+	for (auto t : States[0]) {
+		
+		std::cout << t.first << "       ";
+	}
+	std::cout << '\n';
+
+	for (auto & state : States) {
+		std::cout << "State " << state.first << ": ";
+		for (auto & tr : state.second) {
+			for (auto s : tr.second) {
+				std::cout << s << " ";
+			}
+			std::cout <<  "        ";
+		}
+		std::cout << std::endl;
+	}
+
+}
 
 std::pair<int, int> buildNFA(Node* root, std::map<int, std::map<char, std::set<int>> >  & States) {
 	static int stateCounter = 0;
-	//открываем состояние
-	//идём глубже и строим
-	// а ну buildNFA(buildNFA(left), buildNFA(right))
 
 	//States - таблица состояний.
 	//Transitions - таблица перехода из состояния по символу из алфавита
 
 	//на каждом этапе подсасывает новые состояния к старым в зависимости от операции
-	//надо как-то отслеживать стартовые и финальные состояния
-	//Структура либо запоминать отдельной переменной для каждого автомата и передавать её
-	//переделать токен!!!
+	//TODO переделать токен!!! char поле
 
 	//#cond
-
+	if (root == nullptr)
+		return {-1,-1}; //TODO проверить что это, просто пустая пара??
+	
 	std::pair<int, int> boundsLeft = buildNFA(root->left, States);
+	
 	std::pair<int, int> boundsRight = buildNFA(root->right, States);
+	
+	
 
 	//# check token
 	char c = root->token.cfield;
 
 	int finalState;
 	int startState;
-	if (std::isalpha( root->token.is_operator))
-	{
+	if (std::isalpha(c))	{
 		//# build M(a) 
-		 //переделать тип поля!
+
 		//States[stateCounter] = {};
 		startState = stateCounter;
 		finalState = stateCounter + 1;
@@ -212,36 +230,66 @@ std::pair<int, int> buildNFA(Node* root, std::map<int, std::map<char, std::set<i
 		States[startState] = etalon_Transitions;
 		States[finalState] = etalon_Transitions;
 
-		States[startState]['-'].insert(boundsLeft.first);
-		States[startState]['-'].insert(boundsRight.first);
+		States[startState]['-'].insert(boundsLeft.first);// start -> start_a  
+		States[startState]['-'].insert(boundsRight.first);//start -> start_b
 
-		States[boundsLeft.second]['-'].insert(finalState);
-		States[boundsRight.second]['-'].insert(finalState);
+		States[boundsLeft.second]['-'].insert(finalState);//finish_a -> finish
+		States[boundsRight.second]['-'].insert(finalState); //finish_b -> finish
+
+		stateCounter += 2;
+
+		return { startState,finalState };
+	}
+
+	if (c == '_') {
+		//# build M(ab)
+		States[boundsLeft.second]['-'].insert(boundsRight.first);// finish_a ->start_b
+
+		startState = boundsLeft.first;
+		finalState = boundsRight.second;
+
+		return { startState,finalState };
+	}
+
+	if (c == '*') {
+		//assume LEFT subtree with value and right subtree empty
+		//TODO проверка на пустоту поддерева. Используем то, что не пусто
+		int start_a, final_a;
+		if (boundsLeft.first==-1) {
+			start_a = boundsRight.first;
+			final_a = boundsRight.second;
+		}
+		else {
+			start_a = boundsLeft.first;
+			final_a = boundsLeft.second;
+		}
+
+		startState = stateCounter;
+		finalState = stateCounter + 1;
+
+		States[startState] = etalon_Transitions;
+		States[finalState] = etalon_Transitions;
+		
+		States[startState]['-'].insert(finalState);//start -> finish
+		States[startState]['-'].insert(start_a);//start -> start_a
+		States[final_a]['-'].insert(start_a);//finish_a -> start_a
+		States[final_a]['-'].insert(finalState);//finish_a -> finish
 
 		stateCounter += 2;
 
 		return { startState,finalState };
 
+			
 	}
 
-	if (c == '_') {
-		//# build M(ab)
-
-		//assume left subtree with value and right subtree empty
-
-	}
-
-	if (c == '*') {
-		startState
-	}
-
-	if (c == '-') {
-
-	}
+	return { -1,-1 };
 }
 
 
-void acceptRegExp(std::string regexp) {
+void buildDFA();
+
+
+void handleRegExp(std::string regexp) {
 	std::vector<Lexeme> parsedExp;
 	try {
 
@@ -252,49 +300,34 @@ void acceptRegExp(std::string regexp) {
 		return;
 	}
 
-
+	
 
 	Node * tree = nullptr;
 	tree = buildTree(parsedExp, tree);
 	printTree(tree);
-	destroyTree(tree);
+
+
+
 
 	//# create state table
+	std::map<int, std::map<char, std::set<int>> > States;
+	std::pair<int, int> sf = buildNFA(tree, States);
+	printNFA(States,sf);
+
+
+	destroyTree(tree);
 }
 
 int main() {
 
 	//get reg exp
-	acceptRegExp("(a|b*)");
+	//handleRegExp("(a|b)_c");
+
+	handleRegExp("(a_b*)*_(c|d)_e");
+
+	
 
 
 	std::cin.get();
 	return EXIT_SUCCESS;
-}
-
-
-//TODO 
-//enter  regexp 
-//parse it 
-	//парсить сразу в автомат ->  в таблицу
-	//--------------------------
-	//|					|символы на вход 
-	//|множество состояний|
-	//|
-	//|
-
-
-//build NFA
-//build DFA
-//UI for entering and parse words with DFA
-
-
-//TREE:
-//operations:
-//	brackets
-//	concatenate 
-//	*
-//	|
-
-
-	
+}	
