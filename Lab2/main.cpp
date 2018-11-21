@@ -7,6 +7,8 @@
 #include <exception>
 #include <map>
 #include <set>
+#include <list>
+#include <queue>
 #include "Token.h"
 
 
@@ -14,7 +16,91 @@
 #define BRACKET_PRIORITY 5 //TODO smt with that
 
 std::map<char, std::set<int> > etalon_Transitions;
+std::map<char, std::set<int> > dfa_etalon_Inputs;
 
+//transition = input
+
+class NFA {
+public:
+	std::map<int, std::map<char, std::set<int>>> states = {};
+	int startState;
+	int finalState;	
+
+
+	
+	std::map<char, std::set<int>> inputMap;
+	std::vector<char> inputs;
+	//TODO список inputov
+	std::map<char, std::set<int>> getTransitionMap() {
+		if (inputMap.empty()) {
+			inputMap = states[0];
+		}
+		return inputMap;
+	}
+
+	std::vector<char> getInputs() {
+		if (inputs.empty()) {
+			for (auto i : states[0]) {
+				inputs.push_back(i.first);
+			}
+
+		}
+		return inputs;
+	}
+};
+
+class DFA {
+public:
+	std::map<int, std::map<char, std::set<int>>> states = {};
+	int startState;
+	std::set<int> finalStates;
+	std::vector<char> inputs;
+
+	//std::map<char, std::set<int>> rebuildStateMap;
+	//TODO список inputov
+	
+
+	bool is_final(int state) {
+		return (this->finalStates.find(state) != this->finalStates.end());
+	}
+
+	std::vector<char> getInputs() {
+		if (inputs.empty()) {
+			for (auto i : states[0]) {
+				inputs.push_back(i.first);
+			}
+
+		}
+		return inputs;
+	}
+
+	void printDFA() {
+		std::cout << "\nFinal: ";
+		for (auto i : finalStates)
+			std::cout << i << " ";
+
+		std::cout << "        ";
+		for (auto t : states[0]) {
+
+			std::cout << t.first << "       ";
+		}
+		std::cout << '\n';
+
+		for (auto & state : states) {
+			std::cout << "State " << state.first << ": ";
+			for (auto & tr : state.second) {
+				for (auto s : tr.second) {
+					std::cout << s << " ";
+				}
+				std::cout << "        ";
+			}
+			std::cout << std::endl;
+		}
+
+
+		
+	}
+};
 
 struct Lexeme {
 	std::string value;
@@ -25,7 +111,6 @@ struct Node {
 	Node * right = nullptr;
 	Token token; 
 };
-
 
 void destroyTree(Node* root) {
 	if (root != nullptr) {
@@ -71,7 +156,6 @@ Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
 	return root;
 }
 
-
  int getOperatorPriority(char c) {	 
 	if (c == '|')
 		return 1;
@@ -81,6 +165,7 @@ Node* buildTree(std::vector<Lexeme> & exp, Node * root) {
 		return 2;
 	return -1; //symbol
 }
+
 std::vector<Lexeme> parseExp(const std::string& exp) throw (std::runtime_error) {
 	/*
 		Takes a string-expression and returns parsed expression
@@ -285,9 +370,127 @@ std::pair<int, int> buildNFA(Node* root, std::map<int, std::map<char, std::set<i
 	return { -1,-1 };
 }
 
+void deepSearch(int startState, char input, std::set<int>& unionStates,NFA &nfa) {
+	//откуда идти, по каким дугам, и куда записывать результат	
+	std::map<int, std::map<char, std::set<int>>>  statesTable = nfa.states;
+	unionStates.insert(startState);
+	
+	if (!statesTable[startState][input].empty()) {
 
-void buildDFA();
+		for (int nextState : statesTable[startState][input]){
 
+			//unionStates.insert(nextState);
+			deepSearch(nextState, input, unionStates, nfa);
+		}
+
+		for (int nextState : statesTable[startState]['-']) {
+
+
+			deepSearch(nextState, '-', unionStates, nfa);
+		}
+
+		//возможна ошибка, после пустых могут встретиться е
+	}
+	//else if (!statesTable[startState]['-'].empty()) { //сомнительно, тк по логике заполнения автомата, такого случая не будет
+	//	for (int nextState : statesTable[startState]['-'])
+	//		deepSearch(nextState, '-', unionStates, nfa);
+	//}
+
+	//впилить чек по пустым дугам
+}
+
+DFA buildDFA(NFA& nfa) {
+	
+	dfa_etalon_Inputs = etalon_Transitions;
+	dfa_etalon_Inputs.erase('-');
+
+	std::queue<std::set<int>> Q;
+
+
+	/*
+		для каждого инпута из  проверяем переход (инпут + эпс) и кладём вершины в которые перешли во множество
+		теперь проверяем, попадалось ли раньше такой сет (те сравниваем со всем сетами), если нет, кладём в очередь
+		повторяем, пока очередь не пустая
+	*/
+
+
+	DFA dfa;
+	
+	int startState = nfa.startState;
+	int dfaStateCounter = 0;
+	int curState = 0;
+	std::map<int, std::set<int>> dfaStatesMap;// key - dfa States, value - the set of union nfa states
+
+	dfa.startState = dfaStateCounter;
+	deepSearch(startState, '-', dfaStatesMap[dfaStateCounter], nfa); //create start State of DFS
+	//dfa.states[curState][inp.first].insert(dfaState);	
+	
+	Q.push(dfaStatesMap[dfaStateCounter++]);
+	
+	std::set<int> stateSet;
+	std::set<int> newSet;
+	bool f = true;
+	while (!Q.empty()) {
+
+		stateSet = Q.back();
+		dfa.states[curState] = dfa_etalon_Inputs;
+
+		//# build new set
+		for (auto inp : dfa_etalon_Inputs) {
+
+			int linkState = dfaStateCounter;
+			//идём по всем инпутам и строим сет состояний при переходе по нему
+			for (int s : stateSet) {
+				/*while (1) {
+					std::set<int> vnewSet;
+					deepSearch(s, inp.first, newSet, nfa);
+					deepSearch(s, '-', vnewSet, nfa);
+				}*/
+				deepSearch(s, inp.first, newSet, nfa);
+			}
+
+			//# verify set to be unique
+		/*	f = true;
+			for (auto qset : dfaStatesMap) {
+				if (qset.second == newSet) {
+					f = false;
+					break;
+				}
+			}*/
+			for (int i = 0; i < dfaStatesMap.size(); i++) {
+				if (dfaStatesMap[i] == newSet) {
+					f = false;
+					linkState = i;
+					break;
+				}
+			}
+			
+			
+			if (f) {
+				//пришёл в новое состояние
+				Q.push(newSet);				
+				 
+				//#final state check
+				if (newSet.find(nfa.finalState) != newSet.end())
+					dfa.finalStates.insert(dfaStateCounter);
+
+				dfaStatesMap[dfaStateCounter++] = newSet;
+				
+			}
+			else {
+				//пришёл в уже исследованное состояние
+			}
+			dfa.states[curState][inp.first].insert(linkState);// по сути =dfaState
+		
+		}
+
+		Q.pop();
+		curState++;
+	}
+
+
+	return dfa;
+}
 
 void handleRegExp(std::string regexp) {
 	std::vector<Lexeme> parsedExp;
@@ -312,8 +515,16 @@ void handleRegExp(std::string regexp) {
 	//# create state table
 	std::map<int, std::map<char, std::set<int>> > States;
 	std::pair<int, int> sf = buildNFA(tree, States);
+	NFA nfa;
+	nfa.states = States;
+	nfa.startState = sf.first;
+	nfa.finalState = sf.second;
+
 	printNFA(States,sf);
 
+	DFA dfa;
+	dfa = buildDFA(nfa);
+	dfa.printDFA();
 
 	destroyTree(tree);
 }
@@ -321,11 +532,10 @@ void handleRegExp(std::string regexp) {
 int main() {
 
 	//get reg exp
-	//handleRegExp("(a|b)_c");
+	handleRegExp("a_b");
 
-	handleRegExp("(a_b*)*_(c|d)_e");
+	//handleRegExp("(a_b*)*_(c|d)_e");
 
-	
 
 
 	std::cin.get();
