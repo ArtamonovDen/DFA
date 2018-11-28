@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -18,6 +17,8 @@
 std::map<char, std::set<int> > etalon_Transitions;
 std::map<char, std::set<int> > dfa_etalon_Inputs;
 
+int kostyl_max_state;
+
 //transition = input
 
 class NFA {
@@ -25,9 +26,7 @@ public:
 	std::map<int, std::map<char, std::set<int>>> states = {};
 	int startState;
 	int finalState;	
-
-
-	
+	   	
 	std::map<char, std::set<int>> inputMap;
 	std::vector<char> inputs;
 	//TODO список inputov
@@ -79,7 +78,7 @@ public:
 		for (auto i : finalStates)
 			std::cout << i << " ";
 
-		std::cout << "        ";
+		std::cout << "\n        ";
 		for (auto t : states[0]) {
 
 			std::cout << t.first << "       ";
@@ -276,7 +275,10 @@ std::pair<int, int> buildNFA(Node* root, std::map<int, std::map<char, std::set<i
 
 	//#cond
 	if (root == nullptr)
-		return {-1,-1}; //TODO проверить что это, просто пустая пара??
+	{
+		kostyl_max_state = stateCounter;
+		return { -1,-1 };
+	}
 	
 	std::pair<int, int> boundsLeft = buildNFA(root->left, States);
 	
@@ -299,8 +301,8 @@ std::pair<int, int> buildNFA(Node* root, std::map<int, std::map<char, std::set<i
 		States[stateCounter] = etalon_Transitions;
 		States[stateCounter+1] = etalon_Transitions;
 		States[stateCounter][c].insert(stateCounter + 1); //переход по a
-		startState = stateCounter;
-		finalState = stateCounter + 1;
+		/*startState = stateCounter;
+		finalState = stateCounter + 1;*/
 	
 		stateCounter+=2;
 
@@ -363,41 +365,159 @@ std::pair<int, int> buildNFA(Node* root, std::map<int, std::map<char, std::set<i
 		stateCounter += 2;
 
 		return { startState,finalState };
-
 			
 	}
 
 	return { -1,-1 };
 }
 
+
+void mergeStates(std::set<int> mergeSet, NFA & brokenNFA){
+	
+	//static int mState последнее состояние нка + 1
+
+	std::map<int, std::map<char, std::set<int>> >  & mStates = brokenNFA.states;
+	int mState = mStates.size();
+	mStates[mState] = etalon_Transitions;
+
+	//проверка переходов в мёрдж стейт
+	for (auto fs : mStates) {
+		for (int s : mergeSet) {
+			for (auto inp : fs.second) {
+				if (fs.second[inp.first].find(s) != fs.second[inp.first].end()) {
+					//если переходит в мерж стейт меняем сет перехода: удаляем и заменяем новым стейтом
+					fs.second[inp.first].erase(s);
+					fs.second[inp.first].insert(mState);
+				}
+
+			}
+
+		}
+	}
+
+	//по всем вешинам, которые надо мёржить
+	for (auto s : mergeSet) {
+		brokenNFA.finalState = brokenNFA.finalState == s ? s : brokenNFA.finalState;//проверяем finalstate
+		brokenNFA.startState = brokenNFA.startState == s ? s : brokenNFA.startState;//проверяем finalstate
+
+		//по всем инпутам
+		for (auto inp : etalon_Transitions) {
+			//копируем сет переходов			
+			for (auto a : mStates[s][inp.first]) {
+				mStates[mState][inp.first].insert(a);
+			}
+		}
+
+	}
+	mState++;
+}
+
 void deepSearch(int startState, char input, std::set<int>& unionStates,NFA &nfa) {
-	//откуда идти, по каким дугам, и куда записывать результат	
-	std::map<int, std::map<char, std::set<int>>>  statesTable = nfa.states;
-	unionStates.insert(startState);
+	std::map<int, std::map<char, std::set<int>>>&  statesTable = nfa.states;
 	
 	if (!statesTable[startState][input].empty()) {
 
 		for (int nextState : statesTable[startState][input]){
-
-			//unionStates.insert(nextState);
+			unionStates.insert(nextState);
 			deepSearch(nextState, input, unionStates, nfa);
 		}
 
-		for (int nextState : statesTable[startState]['-']) {
+	}
+}
 
+void notdeepSearch(int startState, char input, std::set<int>& unionStates, NFA &nfa) {
+	std::map<int, std::map<char, std::set<int>>>&  statesTable = nfa.states;
 
-			deepSearch(nextState, '-', unionStates, nfa);
+	if (!statesTable[startState][input].empty()) {
+
+		for (int nextState : statesTable[startState][input]) {
+			unionStates.insert(nextState);
 		}
 
-		//возможна ошибка, после пустых могут встретиться е
 	}
-	//else if (!statesTable[startState]['-'].empty()) { //сомнительно, тк по логике заполнения автомата, такого случая не будет
-	//	for (int nextState : statesTable[startState]['-'])
-	//		deepSearch(nextState, '-', unionStates, nfa);
-	//}
-
-	//впилить чек по пустым дугам
 }
+
+
+DFA skbuildDFA(NFA& nfa) {
+	dfa_etalon_Inputs = etalon_Transitions;
+	dfa_etalon_Inputs.erase('-');
+
+	std::map<int, std::set<int>> dfaStatesMap;// key - dfa States, value - the set of nfa states
+
+	std::vector<char> allInputs;
+	for (auto i : dfa_etalon_Inputs)
+		allInputs.push_back(i.first);
+
+
+	std::queue<std::set<int>> Q;
+	std::set<int> set;
+	std::set<int> unionSet;
+	DFA dfa;
+
+	int stCount = 0;
+	int linkState = 0;
+	int curState = 0;
+	bool f = true;
+	//#init start set 
+	unionSet.insert(nfa.startState);
+	deepSearch(nfa.startState, '-', unionSet, nfa);
+	//dfa.states[linkState] = dfa_etalon_Inputs;
+
+
+	dfaStatesMap[stCount] = unionSet;
+	Q.push(unionSet);
+
+	while (!Q.empty()) {
+		set = Q.front();
+		dfa.states[curState] = dfa_etalon_Inputs;
+
+		for (char inp : allInputs) {
+			unionSet.clear();
+
+			//create new union states as e-closure(move(s)) by inp
+			for (int s : set) {
+				notdeepSearch(s, inp, unionSet, nfa);//move(s,inp)
+			}
+			std::set<int> TunionSet = unionSet;
+			for (int s : TunionSet) {
+				deepSearch(s, '-', unionSet, nfa);//e-closure(move(s,inp))
+				//либо можно оставить и сделать без рекурсии
+			}
+
+
+
+			if (unionSet.empty()) 
+				continue;
+			
+
+			//# verify set to be unique
+			linkState = ++stCount;
+
+			for (int i = 0; i < dfaStatesMap.size(); i++) {
+				if (dfaStatesMap[i] == unionSet) {
+					f = false;
+					linkState = i;
+					stCount--;
+					break;
+				}
+			}
+
+			//пропускаем первое состояние , надо закидывать туда раньше 
+
+			if (f) {				
+				Q.push(unionSet);
+				dfaStatesMap[stCount] = unionSet;
+			}
+
+			dfa.states[curState][inp].insert(linkState);
+		}
+		Q.pop();
+		curState++;
+
+	}
+	return dfa;
+}
+
 
 DFA buildDFA(NFA& nfa) {
 	
@@ -419,9 +539,10 @@ DFA buildDFA(NFA& nfa) {
 	int startState = nfa.startState;
 	int dfaStateCounter = 0;
 	int curState = 0;
+	int linkState;
 	std::map<int, std::set<int>> dfaStatesMap;// key - dfa States, value - the set of union nfa states
-
 	dfa.startState = dfaStateCounter;
+	
 	deepSearch(startState, '-', dfaStatesMap[dfaStateCounter], nfa); //create start State of DFS
 	//dfa.states[curState][inp.first].insert(dfaState);	
 	
@@ -429,63 +550,94 @@ DFA buildDFA(NFA& nfa) {
 	
 	std::set<int> stateSet;
 	std::set<int> newSet;
+	//std::set<int> newSet;
 	bool f = true;
-	while (!Q.empty()) {
 
+
+	while (!Q.empty()) {
+		newSet.clear();
 		stateSet = Q.back();
 		dfa.states[curState] = dfa_etalon_Inputs;
 
-		//# build new set
-		for (auto inp : dfa_etalon_Inputs) {
+		for (int s : stateSet) {
+			//для каждого состояния из сета идём по всем инпутам
+			newSet.clear();
+			for (auto inp : dfa_etalon_Inputs) {
 
-			int linkState = dfaStateCounter;
-			//идём по всем инпутам и строим сет состояний при переходе по нему
-			for (int s : stateSet) {
-				/*while (1) {
-					std::set<int> vnewSet;
-					deepSearch(s, inp.first, newSet, nfa);
-					deepSearch(s, '-', vnewSet, nfa);
-				}*/
-				deepSearch(s, inp.first, newSet, nfa);
-			}
+				deepSearch(s, inp.first, newSet, nfa);//move(s)
+				deepSearch(s, '-', newSet, nfa);//eclosure(move(s))
 
-			//# verify set to be unique
-		/*	f = true;
-			for (auto qset : dfaStatesMap) {
-				if (qset.second == newSet) {
-					f = false;
-					break;
+				linkState = dfaStateCounter;
+
+				//# verify set to be unique
+				for (int i = 0; i < dfaStatesMap.size(); i++) {
+					if (dfaStatesMap[i] == newSet) {
+						f = false;
+						linkState = i;
+						break;
+					}
 				}
-			}*/
-			for (int i = 0; i < dfaStatesMap.size(); i++) {
-				if (dfaStatesMap[i] == newSet) {
-					f = false;
-					linkState = i;
-					break;
-				}
-			}
-			
-			
-			if (f) {
-				//пришёл в новое состояние
-				Q.push(newSet);				
-				 
-				//#final state check
-				if (newSet.find(nfa.finalState) != newSet.end())
-					dfa.finalStates.insert(dfaStateCounter);
 
-				dfaStatesMap[dfaStateCounter++] = newSet;
-				
+				//# deal with Q and adding state to DFA	
+				if (f) {
+					//пришёл в новое состояние
+					Q.push(newSet);
+					//#final state check
+					if (newSet.find(nfa.finalState) != newSet.end())
+						dfa.finalStates.insert(dfaStateCounter);
+
+					dfaStatesMap[dfaStateCounter++] = newSet;
+
+				}
+				else {
+					//пришёл в уже исследованное состояние
+				}
+
+				dfa.states[curState++][inp.first].insert(linkState);// по сути =dfaState
+
 			}
-			else {
-				//пришёл в уже исследованное состояние
-			}
-			dfa.states[curState][inp.first].insert(linkState);// по сути =dfaState
-		
 		}
 
+
+
+		////# build new set
+		//for (auto inp : dfa_etalon_Inputs) {//идём по всем инпутам
+		//	
+		//	//идём по всем инпутам и строим сет состояний при переходе по нему
+		//	for (int s : stateSet) {
+		//		deepSearch(s, inp.first, newSet, nfa);//move(s)
+		//		deepSearch(s, '-', newSet, nfa);//eclosure(move(s))
+		//		
+		//	}
+
+		//	//# verify set to be unique
+		//	for (int i = 0; i < dfaStatesMap.size(); i++) {
+		//		if (dfaStatesMap[i] == newSet) {
+		//			f = false;
+		//			linkState = i;
+		//			break;
+		//		}
+		//	}
+		//	linkState = dfaStateCounter;
+		//	
+		//	if (f) {
+		//		//пришёл в новое состояние
+		//		Q.push(newSet);								 
+		//		//#final state check
+		//		if (newSet.find(nfa.finalState) != newSet.end())
+		//			dfa.finalStates.insert(dfaStateCounter);
+
+		//		dfaStatesMap[dfaStateCounter++] = newSet;
+		//		
+		//	}
+		//	else {
+		//		//пришёл в уже исследованное состояние
+		//	}
+		//	dfa.states[curState][inp.first].insert(linkState);// по сути =dfaState
+		//
+		//}
+
 		Q.pop();
-		curState++;
 	}
 
 
@@ -510,7 +662,7 @@ void handleRegExp(std::string regexp) {
 	printTree(tree);
 
 
-
+	
 
 	//# create state table
 	std::map<int, std::map<char, std::set<int>> > States;
@@ -523,7 +675,7 @@ void handleRegExp(std::string regexp) {
 	printNFA(States,sf);
 
 	DFA dfa;
-	dfa = buildDFA(nfa);
+	dfa = skbuildDFA(nfa);
 	dfa.printDFA();
 
 	destroyTree(tree);
@@ -532,7 +684,7 @@ void handleRegExp(std::string regexp) {
 int main() {
 
 	//get reg exp
-	handleRegExp("a_b");
+	handleRegExp("(a|b)*_z");
 
 	//handleRegExp("(a_b*)*_(c|d)_e");
 
